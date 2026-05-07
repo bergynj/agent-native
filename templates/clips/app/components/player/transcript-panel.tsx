@@ -36,6 +36,12 @@ export interface TranscriptPanelProps {
   onSeek: (ms: number) => void;
   status?: "pending" | "ready" | "failed";
   failureReason?: string | null;
+  cleanup?: {
+    status?: string | null;
+    provider?: string | null;
+    failureReason?: string | null;
+    updatedAt?: string | null;
+  } | null;
   recordingTitle?: string;
   /** Called when the user asks us to retry transcription after fixing an error. */
   onRetry?: () => void;
@@ -50,6 +56,7 @@ export function TranscriptPanel(props: TranscriptPanelProps) {
     onSeek,
     status,
     failureReason,
+    cleanup,
     recordingTitle,
     onRetry,
   } = props;
@@ -199,6 +206,16 @@ export function TranscriptPanel(props: TranscriptPanelProps) {
           <TooltipContent>Download .srt</TooltipContent>
         </Tooltip>
       </div>
+
+      {cleanup?.status === "running" ? (
+        <div className="mx-3 mt-3 rounded-md border border-border bg-accent/30 px-3 py-2 text-xs text-muted-foreground flex items-center gap-2">
+          <IconLoader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+          <span>
+            Native transcript is ready. Cleaning up with Gemini 3.1 Flash-Lite
+            in the background.
+          </span>
+        </div>
+      ) : null}
 
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
