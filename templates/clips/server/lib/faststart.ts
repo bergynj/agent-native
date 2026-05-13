@@ -213,3 +213,14 @@ export function applyFaststart(data: Uint8Array): Uint8Array {
 
   return result;
 }
+
+/**
+ * Return true only when an MP4 buffer has a top-level `moov` atom. Browsers
+ * need this metadata to load duration/tracks; an ftyp+mdat-only file can be
+ * served by storage just fine but will fail playback.
+ */
+export function hasPlayableMp4Metadata(data: Uint8Array): boolean {
+  if (data.byteLength < 8) return false;
+  if (readType(data, 4) !== "ftyp") return false;
+  return parseTopLevelAtoms(data).some((atom) => atom.type === "moov");
+}
