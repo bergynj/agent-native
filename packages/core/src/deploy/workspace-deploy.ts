@@ -905,12 +905,22 @@ function parseWorkspaceAppsManifest(
 }
 
 function workspaceBaseUrl(): string | null {
+  const gatewayOrigin =
+    process.env.WORKSPACE_GATEWAY_URL || process.env.VITE_WORKSPACE_GATEWAY_URL;
+  const publicGatewayOrigin = normalizeOrigin(gatewayOrigin);
+  const gatewayFallback =
+    publicGatewayOrigin && !isLoopbackOrigin(publicGatewayOrigin)
+      ? gatewayOrigin
+      : null;
   return (
-    process.env.WORKSPACE_GATEWAY_URL ||
     process.env.APP_URL ||
+    process.env.WORKSPACE_OAUTH_ORIGIN ||
+    process.env.VITE_WORKSPACE_OAUTH_ORIGIN ||
     process.env.URL ||
     process.env.DEPLOY_URL ||
     process.env.BETTER_AUTH_URL ||
+    gatewayFallback ||
+    gatewayOrigin ||
     null
   );
 }
