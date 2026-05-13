@@ -1504,9 +1504,7 @@ describe("server/auth", () => {
       );
       expect(loginHtml).toContain("__anIsBuilderDesktop()");
       expect(loginHtml).toContain("__anIsAgentNativeDesktop()");
-      expect(loginHtml).toContain(
-        "if (__anIsBuilderPreview()) return 'popup'",
-      );
+      expect(loginHtml).toContain("if (__anIsBuilderPreview()) return 'popup'");
       expect(loginHtml).toContain(
         "__anSetOAuthDebug('Opening Google sign-in in system browser', flowId)",
       );
