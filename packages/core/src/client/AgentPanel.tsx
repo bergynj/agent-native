@@ -64,6 +64,7 @@ import {
   IconArrowsMaximize,
   IconArrowsMinimize,
   IconExternalLink,
+  IconSearch,
 } from "@tabler/icons-react";
 import { FeedbackButton } from "./FeedbackButton.js";
 import {
@@ -78,6 +79,11 @@ import { useLocation, useNavigate } from "react-router";
 import { cn } from "./utils.js";
 import { agentNativePath } from "./api-path.js";
 import { getFrameOrigin, isInFrame, isTrustedFrameMessage } from "./frame.js";
+import {
+  useChatThreads,
+  type ChatThreadScope,
+  type ChatThreadSummary,
+} from "./use-chat-threads.js";
 import {
   getInitialAgentSidebarOpen,
   SIDEBAR_OPEN_KEY,
@@ -135,7 +141,7 @@ const CLI_STORAGE_KEY = "agent-native-cli-command";
 const CLI_DEFAULT = "claude";
 const EXEC_MODE_KEY = "agent-native-exec-mode";
 type ExecMode = "build" | "plan";
-type PanelMode = "chat" | "cli" | "resources" | "settings";
+type PanelMode = "chat" | "cli" | "resources" | "settings" | "history";
 const AGENT_PANEL_FONT_FAMILY =
   'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const AGENT_PANEL_ROOT_STYLE = {
@@ -513,6 +519,7 @@ function AgentPanelInner({
     return defaultMode;
   });
   useEffect(() => {
+    if (mode === "history") return;
     try {
       localStorage.setItem(panelModeKey, mode);
     } catch {}
@@ -716,6 +723,25 @@ function AgentPanelInner({
               </button>
             </TooltipTrigger>
             <TooltipContent>Chat mode</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => switchMode("history")}
+                aria-label="Chat history"
+                className={cn(
+                  "flex items-center gap-1 rounded-md px-2 py-1 text-[12px] leading-none",
+                  activeMode === "history"
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                )}
+                style={AGENT_PANEL_CONTROL_STYLE}
+              >
+                <IconHistory size={14} />
+                History
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Chat history</TooltipContent>
           </Tooltip>
           {showCliMode && (
             <Tooltip>
@@ -1415,6 +1441,25 @@ function AgentPanelInner({
         </div>
       )}
 
+      {/* History view */}
+      {mode === "history" && (
+        <div className="flex flex-col flex-1 min-h-0">
+          <HistoryPanel
+            apiUrl={apiUrl}
+            storageKey={storageKey}
+            scope={scope}
+            onSelectThread={(threadId) => {
+              window.dispatchEvent(
+                new CustomEvent("agent-panel:open-thread", {
+                  detail: { threadId },
+                }),
+              );
+              switchMode("chat");
+            }}
+          />
+        </div>
+      )}
+
       {/* Settings / Setup view */}
       {mode === "settings" && (
         <div className="flex flex-col flex-1 min-h-0">
@@ -1724,6 +1769,143 @@ function ScreenRefreshBoundary({ children }: { children: React.ReactNode }) {
     queryClient.invalidateQueries({ refetchType: "none" });
   }
   return <React.Fragment key={key}>{children}</React.Fragment>;
+}
+
+// ─── HistoryPanel ────────────────────────────────────────────────────────────
+
+function formatHistoryTime(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffDays === 0)
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays < 7) return d.toLocaleDateString([], { weekday: "short" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function HistoryPanel({
+  apiUrl,
+  storageKey,
+  scope,
+  onSelectThread,
+}: {
+  apiUrl?: string;
+  storageKey?: string;
+  scope?: ChatThreadScope | null;
+  onSelectThread: (threadId: string) => void;
+}) {
+  const { threads, activeThreadId, searchThreads } = useChatThreads(
+    apiUrl ?? agentNativePath("/_agent-native/agent-chat"),
+    storageKey,
+    scope,
+  );
+  const [search, setSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<
+    ChatThreadSummary[] | null
+  >(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const searchIdRef = useRef(0);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const q = search.trim();
+    if (!q) {
+      searchIdRef.current++;
+      setSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+    setIsSearching(true);
+    const id = ++searchIdRef.current;
+    debounceRef.current = setTimeout(async () => {
+      if (searchThreads) {
+        const results = await searchThreads(q);
+        if (id !== searchIdRef.current) return;
+        setSearchResults(results);
+      } else {
+        setSearchResults(null);
+      }
+      setIsSearching(false);
+    }, 250);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [search, searchThreads]);
+
+  const visibleThreads = threads.filter(
+    (t) => t.messageCount > 0 || t.id === activeThreadId,
+  );
+
+  const filtered = search.trim()
+    ? (searchResults ?? visibleThreads).filter(
+        (t) => t.messageCount > 0 || t.id === activeThreadId,
+      )
+    : visibleThreads;
+
+  return (
+    <div className="flex flex-col flex-1 min-h-0">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0">
+        <IconSearch size={13} className="text-muted-foreground shrink-0" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search conversations..."
+          autoFocus
+          className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
+        />
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {isSearching ? (
+          <div className="px-3 py-8 text-xs text-muted-foreground text-center">
+            Searching...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="px-3 py-8 text-xs text-muted-foreground text-center">
+            {search ? "No matching conversations" : "No conversations yet"}
+          </div>
+        ) : (
+          <div className="py-1">
+            {filtered.map((thread) => (
+              <button
+                key={thread.id}
+                type="button"
+                onClick={() => onSelectThread(thread.id)}
+                className={cn(
+                  "w-full px-3 py-2.5 text-left hover:bg-accent/50 cursor-pointer border-b border-border/30 last:border-0",
+                  thread.id === activeThreadId && "bg-accent/30",
+                )}
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-xs font-medium text-foreground truncate">
+                    {thread.title || thread.preview || "Chat"}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">
+                    {thread.id === activeThreadId
+                      ? "Active"
+                      : formatHistoryTime(thread.updatedAt)}
+                  </span>
+                </div>
+                {thread.preview && thread.title !== thread.preview && (
+                  <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                    {thread.preview}
+                  </div>
+                )}
+                {thread.scope?.label && (
+                  <div className="mt-0.5 text-[10px] text-muted-foreground/70 truncate">
+                    {thread.scope.label}
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 class AgentPanelErrorBoundary extends React.Component<
