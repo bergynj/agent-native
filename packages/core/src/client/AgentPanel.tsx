@@ -1954,8 +1954,8 @@ export function AgentSidebar({
   // Track whether the frame is controlling the sidebar (code mode = frame active).
   // Default to true when inside an iframe — assume the frame sidebar is active
   // until told otherwise. This prevents both sidebars flashing after hot reloads.
-  const [frameCodeMode, setFrameCodeMode] = useState(
-    () => shouldParentFrameOwnAgentPanel(),
+  const [frameCodeMode, setFrameCodeMode] = useState(() =>
+    shouldParentFrameOwnAgentPanel(),
   );
 
   useEffect(() => {
