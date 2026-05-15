@@ -26,6 +26,11 @@ import {
   IconSearch,
   IconArchive,
   IconArchiveOff,
+  IconLink,
+  IconLock,
+  IconBuilding,
+  IconFilter,
+  IconHome,
 } from "@tabler/icons-react";
 import { getIdToken } from "@/lib/auth";
 import {
@@ -261,6 +266,7 @@ function SortableRow({
   onArchive,
   archived,
   visibility,
+  onSetVisibility,
   children,
 }: {
   id: string;
@@ -278,6 +284,7 @@ function SortableRow({
   onArchive?: (action: "archive" | "restore") => Promise<void> | void;
   archived?: boolean;
   visibility?: Visibility;
+  onSetVisibility?: (visibility: Visibility) => Promise<void> | void;
   children?: React.ReactNode;
 }) {
   const {
@@ -354,6 +361,32 @@ function SortableRow({
     [name, onArchive],
   );
 
+  const runSetVisibility = useCallback(
+    async (visibility: Visibility) => {
+      setMenuOpen(false);
+      if (!onSetVisibility) return;
+      try {
+        await onSetVisibility(visibility);
+      } catch (e) {
+        toast.error(
+          e instanceof Error
+            ? `Couldn't update visibility: ${e.message}`
+            : "Couldn't update visibility",
+        );
+      }
+    },
+    [onSetVisibility],
+  );
+
+  const copyLink = useCallback(() => {
+    const url = window.location.origin + href;
+    navigator.clipboard.writeText(url).then(
+      () => toast.success("Link copied"),
+      () => toast.error("Couldn't copy link"),
+    );
+    setMenuOpen(false);
+  }, [href]);
+
   return (
     <div ref={setNodeRef} style={style} className="group/item relative min-w-0">
       <button
@@ -396,7 +429,28 @@ function SortableRow({
                 className="min-w-0 flex-1 px-2 py-1.5 pr-12 text-xs transition-[padding] md:pr-2 md:group-hover/item:pr-12 md:group-focus-within/item:pr-12"
               >
                 <span className="flex items-center gap-1.5">
-                  {visibility && <VisibilityDot visibility={visibility} />}
+                  {visibility && onSetVisibility ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        void runSetVisibility(
+                          visibility === "private" ? "org" : "private",
+                        );
+                      }}
+                      aria-label={
+                        visibility === "private"
+                          ? "Share with org"
+                          : "Make private"
+                      }
+                      className="shrink-0"
+                    >
+                      <VisibilityDot visibility={visibility} />
+                    </button>
+                  ) : (
+                    visibility && <VisibilityDot visibility={visibility} />
+                  )}
                   <span className="truncate">{name}</span>
                 </span>
               </Link>
@@ -450,6 +504,28 @@ function SortableRow({
                 <IconPencil className="mr-2 h-3.5 w-3.5" />
                 Rename
               </DropdownMenuItem>
+              {onSetVisibility && visibility !== undefined && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    void runSetVisibility(
+                      visibility === "private" ? "org" : "private",
+                    );
+                  }}
+                >
+                  {visibility === "private" ? (
+                    <IconBuilding className="mr-2 h-3.5 w-3.5" />
+                  ) : (
+                    <IconLock className="mr-2 h-3.5 w-3.5" />
+                  )}
+                  {visibility === "private" ? "Share with org" : "Make private"}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem onSelect={copyLink}>
+                <IconLink className="mr-2 h-3.5 w-3.5" />
+                Copy link
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               {onArchive ? (
                 <>
                   {archived ? (
@@ -544,6 +620,7 @@ function SortableDashboardItem({
   onRename,
   onArchive,
   views,
+  onSetVisibility,
 }: {
   d: SidebarDashboard;
   isActive: boolean;
@@ -557,6 +634,10 @@ function SortableDashboardItem({
     action: "archive" | "restore",
   ) => Promise<void>;
   views?: DashboardView[];
+  onSetVisibility?: (
+    d: SidebarDashboard,
+    visibility: Visibility,
+  ) => Promise<void>;
 }) {
   const href = `/adhoc/${d.id}`;
   const { mutateAsync: deleteView } = useDeleteDashboardView();
@@ -609,6 +690,11 @@ function SortableDashboardItem({
       onArchive={onArchive ? (action) => onArchive(d, action) : undefined}
       archived={!!d.archivedAt}
       visibility={d.visibility}
+      onSetVisibility={
+        d.source === "sql" && onSetVisibility
+          ? (v) => onSetVisibility(d, v)
+          : undefined
+      }
     >
       {isActive && allSubviews.length > 0 && (
         <div className="ml-6 mt-0.5 space-y-0.5">
@@ -987,10 +1073,12 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
     getStoredBoolean(DASHBOARDS_OPEN_KEY, true),
   );
   const [dashShowAll, setDashShowAll] = useState(false);
+  const [dashFilter, setDashFilter] = useState<"all" | "org">("all");
   const [analysesOpen, setAnalysesOpen] = useState(() =>
     getStoredBoolean(ANALYSES_OPEN_KEY, true),
   );
   const [analysesShowAll, setAnalysesShowAll] = useState(false);
+  const [analysisFilter, setAnalysisFilter] = useState<"all" | "org">("all");
   const [dashboardSortMode, setDashboardSortModeState] =
     useState<SidebarSortMode>(() => getStoredSortMode(DASHBOARD_SORT_MODE_KEY));
   const [analysisSortMode, setAnalysisSortModeState] =
@@ -1016,6 +1104,9 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
   const { mutateAsync: renameDashboard } =
     useActionMutation("rename-dashboard");
   const { mutateAsync: renameAnalysis } = useActionMutation("rename-analysis");
+  const { mutateAsync: setResourceVisibility } = useActionMutation(
+    "set-resource-visibility",
+  );
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === "undefined") return 256;
     const saved = localStorage.getItem("sidebar-width");
@@ -1139,12 +1230,22 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
     favoriteIds,
   ]);
 
+  const filteredAnalyses = useMemo(
+    () =>
+      analysisFilter === "org"
+        ? sortedAnalyses.filter(
+            (a) => a.visibility === "org" || a.visibility === "public",
+          )
+        : sortedAnalyses,
+    [sortedAnalyses, analysisFilter],
+  );
+
   const displayedAnalyses = useMemo(
     () =>
       analysesShowAll
-        ? sortedAnalyses
-        : sortedAnalyses.slice(0, SIDEBAR_PREVIEW_COUNT),
-    [sortedAnalyses, analysesShowAll],
+        ? filteredAnalyses
+        : filteredAnalyses.slice(0, SIDEBAR_PREVIEW_COUNT),
+    [filteredAnalyses, analysesShowAll],
   );
 
   // Fetch views for all dashboards (for sidebar sub-items)
@@ -1200,12 +1301,22 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
     popularity,
   ]);
 
+  const filteredDashboards = useMemo(
+    () =>
+      dashFilter === "org"
+        ? visibleDashboards.filter(
+            (d) => d.visibility === "org" || d.visibility === "public",
+          )
+        : visibleDashboards,
+    [visibleDashboards, dashFilter],
+  );
+
   const displayedDashboards = useMemo(
     () =>
       dashShowAll
-        ? visibleDashboards
-        : visibleDashboards.slice(0, SIDEBAR_PREVIEW_COUNT),
-    [visibleDashboards, dashShowAll],
+        ? filteredDashboards
+        : filteredDashboards.slice(0, SIDEBAR_PREVIEW_COUNT),
+    [filteredDashboards, dashShowAll],
   );
 
   const handleDashboardDelete = useCallback(
@@ -1378,6 +1489,77 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
     [queryClient],
   );
 
+  const handleDashboardSetVisibility = useCallback(
+    async (d: SidebarDashboard, visibility: Visibility) => {
+      if (d.source === "static") return;
+      const queryKey = ["sql-dashboards-sidebar"] as const;
+      const prev = queryClient.getQueryData<SqlDashboardListItem[]>(queryKey);
+      queryClient.setQueryData<SqlDashboardListItem[]>(queryKey, (old) =>
+        (old ?? []).map((item) =>
+          item.id === d.id ? { ...item, visibility } : item,
+        ),
+      );
+      try {
+        await setResourceVisibility({
+          resourceType: "dashboard",
+          resourceId: d.id,
+          visibility,
+        } as any);
+        queryClient.invalidateQueries({ queryKey });
+        toast.success(
+          visibility === "org"
+            ? `"${d.name}" shared with org`
+            : `"${d.name}" made private`,
+        );
+      } catch (err) {
+        if (prev) queryClient.setQueryData(queryKey, prev);
+        throw err;
+      }
+    },
+    [queryClient, setResourceVisibility],
+  );
+
+  const handleAnalysisSetVisibility = useCallback(
+    async (a: { id: string; name: string }, visibility: Visibility) => {
+      const sidebarKey = ["analyses-sidebar"] as const;
+      const listKey = ["analyses-list"] as const;
+      const prev =
+        queryClient.getQueryData<
+          { id: string; name: string; visibility?: Visibility }[]
+        >(sidebarKey);
+      queryClient.setQueryData<
+        { id: string; name: string; visibility?: Visibility }[]
+      >(sidebarKey, (old) =>
+        (old ?? []).map((item) =>
+          item.id === a.id ? { ...item, visibility } : item,
+        ),
+      );
+      queryClient.setQueryData<any[]>(listKey, (old) =>
+        (old ?? []).map((item) =>
+          item.id === a.id ? { ...item, visibility } : item,
+        ),
+      );
+      try {
+        await setResourceVisibility({
+          resourceType: "analysis",
+          resourceId: a.id,
+          visibility,
+        } as any);
+        queryClient.invalidateQueries({ queryKey: sidebarKey });
+        queryClient.invalidateQueries({ queryKey: listKey });
+        toast.success(
+          visibility === "org"
+            ? `"${a.name}" shared with org`
+            : `"${a.name}" made private`,
+        );
+      } catch (err) {
+        if (prev) queryClient.setQueryData(sidebarKey, prev);
+        throw err;
+      }
+    },
+    [queryClient, setResourceVisibility],
+  );
+
   const handleAnalysisRename = useCallback(
     async (a: { id: string; name: string }, name: string) => {
       const trimmed = name.trim();
@@ -1533,6 +1715,20 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden py-2">
         <nav className="grid min-w-0 items-start px-2 text-sm font-medium lg:px-4 space-y-1">
+          {/* Overview link */}
+          <Link
+            to="/overview"
+            className={cn(
+              "flex items-center gap-3 rounded-lg px-3 py-2 transition-all hover:text-primary",
+              location.pathname === "/overview"
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-muted-foreground hover:bg-sidebar-accent/50",
+            )}
+          >
+            <IconHome className="h-4 w-4" />
+            Overview
+          </Link>
+
           {/* Data Sources link */}
           <Link
             to="/data-sources"
@@ -1584,6 +1780,34 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
               value={dashboardSortMode}
               onChange={setDashboardSortMode}
             />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDashFilter((f) => (f === "all" ? "org" : "all"))
+                  }
+                  className={cn(
+                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-all focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring",
+                    dashFilter === "org"
+                      ? "text-blue-400"
+                      : "text-muted-foreground/45 opacity-0 hover:bg-sidebar-accent hover:text-foreground group-hover/section:opacity-100",
+                  )}
+                  aria-label={
+                    dashFilter === "org"
+                      ? "Showing org-shared only"
+                      : "Filter by org-shared"
+                  }
+                >
+                  <IconFilter className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                {dashFilter === "org"
+                  ? "Showing org-shared (click for all)"
+                  : "Show org-shared only"}
+              </TooltipContent>
+            </Tooltip>
             <button
               type="button"
               onClick={toggleDashOpen}
@@ -1623,17 +1847,18 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
                       onDelete={handleDashboardDelete}
                       onRename={handleDashboardRename}
                       onArchive={handleDashboardArchive}
+                      onSetVisibility={handleDashboardSetVisibility}
                       views={allViewsMap[d.id]}
                     />
                   ))}
-                  {visibleDashboards.length > SIDEBAR_PREVIEW_COUNT && (
+                  {filteredDashboards.length > SIDEBAR_PREVIEW_COUNT && (
                     <button
                       onClick={() => setDashShowAll(!dashShowAll)}
                       className="flex items-center gap-1 px-3 py-1 text-[11px] text-muted-foreground/70 hover:text-primary"
                     >
                       {dashShowAll
                         ? "Show less"
-                        : `Show ${visibleDashboards.length - SIDEBAR_PREVIEW_COUNT} more`}
+                        : `Show ${filteredDashboards.length - SIDEBAR_PREVIEW_COUNT} more`}
                     </button>
                   )}
                   {sqlDashboardsLoading &&
@@ -1729,6 +1954,34 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
               value={analysisSortMode}
               onChange={setAnalysisSortMode}
             />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAnalysisFilter((f) => (f === "all" ? "org" : "all"))
+                  }
+                  className={cn(
+                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-all focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring",
+                    analysisFilter === "org"
+                      ? "text-blue-400"
+                      : "text-muted-foreground/45 opacity-0 hover:bg-sidebar-accent hover:text-foreground group-hover/section:opacity-100",
+                  )}
+                  aria-label={
+                    analysisFilter === "org"
+                      ? "Showing org-shared only"
+                      : "Filter by org-shared"
+                  }
+                >
+                  <IconFilter className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                {analysisFilter === "org"
+                  ? "Showing org-shared (click for all)"
+                  : "Show org-shared only"}
+              </TooltipContent>
+            </Tooltip>
             <button
               type="button"
               onClick={toggleAnalysesOpen}
@@ -1770,16 +2023,17 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
                       onDelete={() => handleAnalysisDelete(a)}
                       onRename={(name) => handleAnalysisRename(a, name)}
                       visibility={a.visibility}
+                      onSetVisibility={(v) => handleAnalysisSetVisibility(a, v)}
                     />
                   ))}
-                  {sortedAnalyses.length > SIDEBAR_PREVIEW_COUNT && (
+                  {filteredAnalyses.length > SIDEBAR_PREVIEW_COUNT && (
                     <button
                       onClick={() => setAnalysesShowAll(!analysesShowAll)}
                       className="flex items-center gap-1 px-3 py-1 text-[11px] text-muted-foreground/70 hover:text-primary"
                     >
                       {analysesShowAll
                         ? "Show less"
-                        : `Show ${sortedAnalyses.length - SIDEBAR_PREVIEW_COUNT} more`}
+                        : `Show ${filteredAnalyses.length - SIDEBAR_PREVIEW_COUNT} more`}
                     </button>
                   )}
                   {analysesLoading &&
