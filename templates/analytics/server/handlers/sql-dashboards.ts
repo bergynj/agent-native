@@ -133,6 +133,7 @@ export const getSqlDashboard = defineEventHandler(async (event) => {
       orgId: dash.orgId,
       visibility: dash.visibility,
       archivedAt: dash.archivedAt,
+      keptAt: dash.keptAt,
       createdAt: dash.createdAt,
       updatedAt: dash.updatedAt,
     };

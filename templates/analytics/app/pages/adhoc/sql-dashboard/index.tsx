@@ -72,6 +72,7 @@ import { interpolate } from "./interpolate";
 import { AddPanelPopover, PanelEditorDialog } from "./PanelEditorDialog";
 import { ViewsMenu } from "./ViewsMenu";
 import BlankDashboard from "../BlankDashboard";
+import { KeepBanner } from "@/components/KeepBanner";
 import {
   clampDashboardColumns,
   clampPanelWidth,
@@ -125,6 +126,7 @@ type FetchedDashboard = {
   id: string;
   config: SqlDashboardConfig;
   archivedAt: string | null;
+  keptAt: string | null;
   updatedAt: string | null;
   ownerEmail: string | null;
   visibility: "private" | "org" | "public" | null;
@@ -145,6 +147,7 @@ async function fetchDashboard(id: string): Promise<FetchedDashboard | null> {
       panels: data.panels ?? [],
     },
     archivedAt: typeof data.archivedAt === "string" ? data.archivedAt : null,
+    keptAt: typeof data.keptAt === "string" ? data.keptAt : null,
     updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : null,
     ownerEmail: typeof data.ownerEmail === "string" ? data.ownerEmail : null,
     visibility:
@@ -185,6 +188,7 @@ export default function SqlDashboardPage() {
 
   const [dashboard, setDashboard] = useState<SqlDashboardConfig | null>(null);
   const [archivedAt, setArchivedAt] = useState<string | null>(null);
+  const [keptAt, setKeptAt] = useState<string | null>(null);
   const [dashboardUpdatedAt, setDashboardUpdatedAt] = useState<string | null>(
     null,
   );
@@ -348,6 +352,7 @@ export default function SqlDashboardPage() {
     if (fetched && fetched.id !== dashboardId) return;
     setDashboard(fetched?.config ?? null);
     setArchivedAt(fetched?.archivedAt ?? null);
+    setKeptAt(fetched?.keptAt ?? null);
     setDashboardUpdatedAt(fetched?.updatedAt ?? null);
     setDashboardOwner(fetched?.ownerEmail ?? null);
     setDashboardVisibility(fetched?.visibility ?? "private");
@@ -969,6 +974,15 @@ export default function SqlDashboardPage() {
 
   return (
     <div className="space-y-4">
+      {dashboardId && dashboard && (
+        <KeepBanner
+          resourceType="dashboard"
+          resourceId={dashboardId}
+          resourceName={dashboard.name ?? "Dashboard"}
+          keptAt={keptAt}
+          onKept={() => setKeptAt(new Date().toISOString())}
+        />
+      )}
       {/* Author, last updated, and visibility metadata */}
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
         {dashboardUpdatedAt && (

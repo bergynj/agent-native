@@ -10,7 +10,13 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { IconFlask, IconClock, IconSearch } from "@tabler/icons-react";
+import {
+  IconFlask,
+  IconClock,
+  IconSearch,
+  IconBookmarkFilled,
+  IconBookmark,
+} from "@tabler/icons-react";
 import { getIdToken } from "@/lib/auth";
 import {
   appApiPath,
@@ -26,6 +32,7 @@ interface AnalysisSummary {
   createdAt: string;
   updatedAt: string;
   author: string;
+  keptAt: string | null;
 }
 
 async function fetchAnalyses(): Promise<AnalysisSummary[]> {
@@ -167,6 +174,13 @@ export default function AnalysesList() {
                       {a.author && (
                         <span className="truncate">by {a.author}</span>
                       )}
+                      <span className="ml-auto">
+                        {a.keptAt ? (
+                          <IconBookmarkFilled className="h-3.5 w-3.5 text-green-600" />
+                        ) : (
+                          <IconBookmark className="h-3.5 w-3.5 text-amber-500" />
+                        )}
+                      </span>
                     </div>
                   </CardContent>
                 </Card>

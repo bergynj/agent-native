@@ -36,6 +36,7 @@ import {
   IconBuilding,
   IconFilter,
   IconHome,
+  IconBookmark,
 } from "@tabler/icons-react";
 import { getIdToken } from "@/lib/auth";
 import {
@@ -53,6 +54,7 @@ type SidebarDashboard = {
   subviews?: DashboardSubview[];
   source: "static" | "sql";
   archivedAt?: string | null;
+  keptAt?: string | null;
   visibility?: Visibility;
 };
 import {
@@ -986,6 +988,7 @@ type SqlDashboardListItem = {
   id: string;
   name: string;
   archivedAt: string | null;
+  keptAt: string | null;
   visibility?: Visibility;
 };
 
@@ -1035,6 +1038,7 @@ async function fetchSqlDashboardsByArchived(
           ? d.name
           : "Untitled dashboard",
       archivedAt: typeof d.archivedAt === "string" ? d.archivedAt : null,
+      keptAt: typeof d.keptAt === "string" ? d.keptAt : null,
       visibility:
         d.visibility === "org" || d.visibility === "public"
           ? d.visibility
@@ -1047,7 +1051,7 @@ const fetchArchivedSqlDashboards = () =>
   fetchSqlDashboardsByArchived("archived");
 
 async function fetchSidebarAnalyses(): Promise<
-  { id: string; name: string; visibility?: Visibility }[]
+  { id: string; name: string; keptAt: string | null; visibility?: Visibility }[]
 > {
   const token = await getIdToken();
   const res = await fetch(appApiPath("/api/analyses"), {
@@ -1064,6 +1068,7 @@ async function fetchSidebarAnalyses(): Promise<
         typeof a.name === "string" && a.name.trim().length > 0
           ? a.name
           : "Untitled analysis",
+      keptAt: typeof a.keptAt === "string" ? a.keptAt : null,
       visibility:
         a.visibility === "org" || a.visibility === "public"
           ? a.visibility
@@ -1342,6 +1347,15 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
     [filteredAnalyses, analysesShowAll],
   );
 
+  const unclaimedDashboardCount = useMemo(
+    () => sqlDashboards.filter((d) => d.keptAt === null).length,
+    [sqlDashboards],
+  );
+  const unclaimedAnalysisCount = useMemo(
+    () => analysesList.filter((a) => a.keptAt === null).length,
+    [analysesList],
+  );
+
   const activeDashboardId = useMemo(() => {
     const match = location.pathname.match(/^\/adhoc\/([^/]+)/);
     if (!match?.[1]) return null;
@@ -1412,6 +1426,7 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
       name: d.name,
       source: "sql",
       archivedAt: d.archivedAt,
+      keptAt: d.keptAt,
       visibility: d.visibility,
     }));
     const all = [...staticItems, ...sqlItems];
@@ -1538,7 +1553,7 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
           { queryKey: archivedKey },
           (old) => [
             ...(old ?? []),
-            { id: d.id, name: d.name, archivedAt: new Date().toISOString() },
+            { id: d.id, name: d.name, archivedAt: new Date().toISOString(), keptAt: d.keptAt ?? null },
           ],
         );
       } else {
@@ -1550,7 +1565,7 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
           { queryKey: activeKey },
           (old) => [
             ...(old ?? []),
-            { id: d.id, name: d.name, archivedAt: null },
+            { id: d.id, name: d.name, archivedAt: null, keptAt: d.keptAt ?? null },
           ],
         );
       }
@@ -1658,7 +1673,10 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
     async (d: SidebarDashboard, visibility: Visibility) => {
       if (d.source === "static") return;
       const queryKey = ["sql-dashboards-sidebar"] as const;
-      const prev = getQuerySnapshots<SqlDashboardListItem[]>(queryClient, queryKey);
+      const prev = getQuerySnapshots<SqlDashboardListItem[]>(
+        queryClient,
+        queryKey,
+      );
       queryClient.setQueriesData<SqlDashboardListItem[]>({ queryKey }, (old) =>
         (old ?? []).map((item) =>
           item.id === d.id ? { ...item, visibility } : item,
@@ -1945,6 +1963,19 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
             >
               <IconChartBar className="h-4 w-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate">Dashboards</span>
+              {unclaimedDashboardCount > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                      <IconBookmark className="h-2.5 w-2.5" />
+                      {unclaimedDashboardCount}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    {unclaimedDashboardCount} unclaimed
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </button>
             <SidebarSectionSortMenu
               label="Dashboards"
@@ -2018,7 +2049,7 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
                       onDelete={handleDashboardDelete}
                       onRename={handleDashboardRename}
                       onArchive={handleDashboardArchive}
-onSetVisibility={handleDashboardSetVisibility}
+                      onSetVisibility={handleDashboardSetVisibility}
                       onPrefetch={prefetchDashboard}
                       views={allViewsMap[d.id]}
                     />
@@ -2120,6 +2151,19 @@ onSetVisibility={handleDashboardSetVisibility}
             >
               <IconReportAnalytics className="h-4 w-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate">Analyses</span>
+              {unclaimedAnalysisCount > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0 text-[10px] font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                      <IconBookmark className="h-2.5 w-2.5" />
+                      {unclaimedAnalysisCount}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    {unclaimedAnalysisCount} unclaimed
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </button>
             <SidebarSectionSortMenu
               label="Analyses"
@@ -2194,7 +2238,7 @@ onSetVisibility={handleDashboardSetVisibility}
                       onToggleFavorite={toggleFavorite}
                       onDelete={() => handleAnalysisDelete(a)}
                       onRename={(name) => handleAnalysisRename(a, name)}
-visibility={a.visibility}
+                      visibility={a.visibility}
                       onSetVisibility={(v) => handleAnalysisSetVisibility(a, v)}
                       onPrefetch={() => prefetchAnalysis(a.id)}
                     />

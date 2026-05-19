@@ -37,6 +37,7 @@ import {
 import { getIdToken } from "@/lib/auth";
 import { useSendToAgentChat } from "@agent-native/core/client";
 import Markdown from "@/components/Markdown";
+import { KeepBanner } from "@/components/KeepBanner";
 import LegacyFusionAnalysis, {
   isLegacyFusionAnalysis,
 } from "./LegacyFusionAnalysis";
@@ -63,6 +64,7 @@ interface Analysis {
   updatedAt: string;
   author: string;
   visibility: "private" | "org" | "public";
+  keptAt: string | null;
 }
 
 async function fetchAnalysis(id: string): Promise<Analysis | null> {
@@ -247,6 +249,12 @@ export default function AnalysisDetail() {
           showLegacyFusionDashboard ? "max-w-6xl" : "max-w-4xl",
         )}
       >
+        <KeepBanner
+          resourceType="analysis"
+          resourceId={analysis.id}
+          resourceName={analysis.name}
+          keptAt={analysis.keptAt}
+        />
         {/* Header */}
         <div>
           <Link
