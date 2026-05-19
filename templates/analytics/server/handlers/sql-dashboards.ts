@@ -103,6 +103,8 @@ export const listSqlDashboards = defineEventHandler(async (event) => {
       orgId: d.orgId,
       visibility: d.visibility,
       archivedAt: d.archivedAt,
+      updatedAt: d.updatedAt,
+      createdAt: d.createdAt,
     }));
     return { dashboards };
   } catch (err: any) {

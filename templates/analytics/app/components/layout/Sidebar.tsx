@@ -1658,8 +1658,8 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
     async (d: SidebarDashboard, visibility: Visibility) => {
       if (d.source === "static") return;
       const queryKey = ["sql-dashboards-sidebar"] as const;
-      const prev = queryClient.getQueryData<SqlDashboardListItem[]>(queryKey);
-      queryClient.setQueryData<SqlDashboardListItem[]>(queryKey, (old) =>
+      const prev = getQuerySnapshots<SqlDashboardListItem[]>(queryClient, queryKey);
+      queryClient.setQueriesData<SqlDashboardListItem[]>({ queryKey }, (old) =>
         (old ?? []).map((item) =>
           item.id === d.id ? { ...item, visibility } : item,
         ),
@@ -1677,7 +1677,7 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
             : `"${d.name}" made private`,
         );
       } catch (err) {
-        if (prev) queryClient.setQueryData(queryKey, prev);
+        restoreQuerySnapshots(queryClient, prev);
         throw err;
       }
     },
@@ -1688,18 +1688,18 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
     async (a: { id: string; name: string }, visibility: Visibility) => {
       const sidebarKey = ["analyses-sidebar"] as const;
       const listKey = ["analyses-list"] as const;
-      const prev =
-        queryClient.getQueryData<
-          { id: string; name: string; visibility?: Visibility }[]
-        >(sidebarKey);
-      queryClient.setQueryData<
+      const prevSidebar = getQuerySnapshots<
         { id: string; name: string; visibility?: Visibility }[]
-      >(sidebarKey, (old) =>
+      >(queryClient, sidebarKey);
+      const prevList = getQuerySnapshots<any[]>(queryClient, listKey);
+      queryClient.setQueriesData<
+        { id: string; name: string; visibility?: Visibility }[]
+      >({ queryKey: sidebarKey }, (old) =>
         (old ?? []).map((item) =>
           item.id === a.id ? { ...item, visibility } : item,
         ),
       );
-      queryClient.setQueryData<any[]>(listKey, (old) =>
+      queryClient.setQueriesData<any[]>({ queryKey: listKey }, (old) =>
         (old ?? []).map((item) =>
           item.id === a.id ? { ...item, visibility } : item,
         ),
@@ -1718,7 +1718,8 @@ export function Sidebar({ mobile }: { mobile?: boolean } = {}) {
             : `"${a.name}" made private`,
         );
       } catch (err) {
-        if (prev) queryClient.setQueryData(sidebarKey, prev);
+        restoreQuerySnapshots(queryClient, prevSidebar);
+        restoreQuerySnapshots(queryClient, prevList);
         throw err;
       }
     },
