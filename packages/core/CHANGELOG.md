@@ -1,5 +1,90 @@
 # @agent-native/core
 
+## 0.20.7
+
+### Patch Changes
+
+- e06d8ab: Keep Builder iframe Google sign-in on the popup path when redirects cannot work.
+
+## 0.20.6
+
+### Patch Changes
+
+- 52adc2d: Keep Builder.io connect popups alive when the click-time status refresh fails by falling back to the recently fetched signed connect URL.
+
+## 0.20.5
+
+### Patch Changes
+
+- a470349: Clear the chat drop overlay when the composer consumes dropped files.
+
+## 0.20.4
+
+### Patch Changes
+
+- dab88cd: Prevent dropped screenshots in the agent composer from attaching twice.
+
+## 0.20.3
+
+### Patch Changes
+
+- 76b5268: Stop closed agent sidebars from mounting hidden polling surfaces on page load.
+
+## 0.20.2
+
+### Patch Changes
+
+- f343737: Use the shared popover primitive for the composer model picker and keep the menu stable while model groups expand.
+- f343737: Fall back to redirect Google sign-in when the popup OAuth window is blocked.
+- f343737: Quiet Builder credential and engine detection diagnostics unless debug tracing is enabled.
+- f343737: Prompt for target agent clients during `agent-native connect` and remember the selection.
+- f343737: Soften the MCP connect authorization UI and collapse existing connections by default.
+
+## 0.20.1
+
+### Patch Changes
+
+- 6f3002f: Prevent integration retry timers from keeping Netlify function invocations open and retry Postgres connection timeouts.
+
+## 0.20.0
+
+### Minor Changes
+
+- 3eb86c8: Add shared Code chat transcript replay, prompt attachment helpers, and injectable AssistantChat runtime adapters.
+
+### Patch Changes
+
+- 3eb86c8: Allow extensions to resolve vault-backed keys from the active workspace and mirror Dispatch vault saves into the shared credential store.
+- 3eb86c8: Respect externally supplied Builder-backed model availability in the shared composer model picker.
+- 3eb86c8: Preserve spaces between streamed Agent-Native Code transcript chunks.
+- 3eb86c8: Collapse the agent sidebar by default when opening external-agent deep links.
+- 3eb86c8: Bound agent chat startup/history size and surface stalled or quota-capped runs instead of retrying forever.
+
+## 0.19.3
+
+### Patch Changes
+
+- 39b4db3: Harden and complete external-agent MCP connect flows for hosted and local apps.
+  - A connect-minted token (or `mcp install` / ACCESS_TOKEN / production caller)
+    now gets the full MCP tool surface — including mutating template actions
+    like `create-document` — even in local dev, matching the documented
+    external-agents contract. Previously a connected Claude Code/Codex/Cowork
+    only saw framework builtins in dev, so "say it and it does it" didn't work
+    against a local app.
+  - `list_apps` now reports the live request origin and `running: true` for the
+    app serving the request, instead of a guessed `PORT || 5173` URL with
+    `running: false` (which mis-pointed cross-app deep links on non-default
+    dev ports).
+  - The in-app Connect page now auto-refreshes "Your connections" after a
+    device authorize, so the new connection appears (with a "Connected"
+    confirmation) without a manual reload.
+
+## 0.19.2
+
+### Patch Changes
+
+- 046a8f2: Improve the external-agent connect screen hierarchy and device-code presentation.
+
 ## 0.19.1
 
 ### Patch Changes

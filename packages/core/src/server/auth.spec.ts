@@ -1738,7 +1738,17 @@ describe("server/auth", () => {
         "__anSetOAuthDebug('Google popup opened; waiting for callback', flowId)",
       );
       expect(html).toContain(
-        "Google popup was blocked. Allow popups for this site",
+        "function __anStartRedirectOAuth(ret, btn, err, flowId, reason)",
+      );
+      expect(html).toContain(
+        "function __anHandlePopupOAuthFailure(ret, btn, err, flowId, redirectReason, builderFrameMessage)",
+      );
+      expect(html).toContain(
+        "Google popup was blocked; falling back to redirect",
+      );
+      expect(html).toContain("Allow popups for this site and try again");
+      expect(html).toContain(
+        "Opening Google sign-in redirect from Builder preview",
       );
       expect(html).toContain(
         "never reached this app. Check the Google OAuth redirect URI",
@@ -1765,7 +1775,7 @@ describe("server/auth", () => {
         "__anSetOAuthDebug('Opening Google sign-in in system browser', flowId)",
       );
       expect(html).toContain(
-        "__anSetOAuthDebug('Opening Google sign-in redirect')",
+        "__anSetOAuthDebug(reason || 'Opening Google sign-in redirect', flowId)",
       );
       expect(html).toContain("function __anBuilderPreviewReturnOrigin()");
       expect(html).toContain("function __anGoogleAuthUrlPath()");
@@ -1780,7 +1790,7 @@ describe("server/auth", () => {
         "window.location.replace(__anSessionBridgeUrl(ret, sessionToken))",
       );
       expect(html).toContain(
-        "params.set('return', __anOAuthReturnTarget(ret))",
+        "if (oauthReturn) params.set('return', oauthReturn)",
       );
       expect(html).toContain(
         "var oauthReturn = __anIsBuilderPreview() ? __anOAuthReturnTarget(ret) : ret;",
@@ -1842,7 +1852,7 @@ describe("server/auth", () => {
         "__anSetOAuthDebug('Opening Google sign-in in system browser', flowId)",
       );
       expect(loginHtml).toContain(
-        "__anSetOAuthDebug('Opening Google sign-in redirect')",
+        "__anSetOAuthDebug(reason || 'Opening Google sign-in redirect', flowId)",
       );
       expect(loginHtml).toContain("function __anBuilderPreviewReturnOrigin()");
       expect(loginHtml).toContain(
@@ -1863,7 +1873,7 @@ describe("server/auth", () => {
         "var oauthReturn = __anIsBuilderPreview() ? __anOAuthReturnTarget(ret) : ret;",
       );
       expect(loginHtml).toContain(
-        "params.set('return', __anOAuthReturnTarget(ret))",
+        "if (oauthReturn) params.set('return', oauthReturn)",
       );
       expect(loginHtml).toContain(
         "__anWaitForOAuthExchange(flowId, ret, btn, err)",
@@ -1880,7 +1890,17 @@ describe("server/auth", () => {
       );
       expect(loginHtml).toContain("popup.location.href = url");
       expect(loginHtml).toContain(
-        "Google popup was blocked. Allow popups for this site",
+        "function __anStartRedirectOAuth(ret, btn, err, flowId, reason)",
+      );
+      expect(loginHtml).toContain(
+        "function __anHandlePopupOAuthFailure(ret, btn, err, flowId, redirectReason, builderFrameMessage)",
+      );
+      expect(loginHtml).toContain(
+        "Google popup was blocked; falling back to redirect",
+      );
+      expect(loginHtml).toContain("Allow popups for this site and try again");
+      expect(loginHtml).toContain(
+        "Opening Google sign-in redirect from Builder preview",
       );
       expect(loginHtml).toContain(
         "never reached this app. Check the Google OAuth redirect URI",

@@ -30,7 +30,11 @@
 import type { H3Event } from "h3";
 import { getMethod, getHeader } from "h3";
 import { readBody } from "../server/h3-helpers.js";
-import { getSession, getConfiguredLoginHtml } from "../server/auth.js";
+import {
+  getSession,
+  getConfiguredLoginHtml,
+  isLoopbackRequest,
+} from "../server/auth.js";
 import { signA2AToken } from "../a2a/client.js";
 import { getOrgDomain } from "../org/context.js";
 import { randomUUID } from "node:crypto";
@@ -41,6 +45,7 @@ import {
   createDeviceCode,
   getDeviceCode,
   approveDeviceCode,
+  consumeDeviceCode,
   claimDeviceCodeForMint,
   finishDeviceCodeMint,
   releaseDeviceCodeMint,
@@ -123,6 +128,20 @@ function serverName(origin: string, options: McpConnectRouteOptions): string {
   return `agent-native-${appLabel(origin, options)}`;
 }
 
+function canUseDevOpenConnect(event: H3Event): boolean {
+  // Loopback determined from the real socket peer (isLoopbackRequest →
+  // getRequestIP without xForwardedFor), NOT a parsed `Host` header — the
+  // header is client-controlled, and it also handles IPv6 `::1`. A
+  // misconfigured public deploy with no secret thus can't unlock dev-open
+  // by spoofing `Host: localhost`.
+  return (
+    isLoopbackRequest(event) &&
+    !process.env.A2A_SECRET?.trim() &&
+    !process.env.ACCESS_TOKEN?.trim() &&
+    !process.env.ACCESS_TOKENS?.trim()
+  );
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -189,19 +208,24 @@ async function mintConnectToken(params: {
 
 function mcpResultPayload(
   appUrl: string,
-  token: string,
   options: McpConnectRouteOptions,
+  auth: { token?: string; ownerEmail?: string },
 ) {
   const mcpUrl = `${appUrl}/_agent-native/mcp`;
   const name = serverName(appUrl, options);
+  const headers: Record<string, string> = {};
+  if (auth.token) headers.Authorization = `Bearer ${auth.token}`;
+  if (!auth.token && auth.ownerEmail) {
+    headers["X-Agent-Native-Owner-Email"] = auth.ownerEmail;
+  }
   return {
-    token,
+    token: auth.token ?? "",
     mcpUrl,
     serverName: name,
     mcpServerEntry: {
       type: "http" as const,
       url: mcpUrl,
-      headers: { Authorization: `Bearer ${token}` },
+      ...(Object.keys(headers).length ? { headers } : {}),
     },
     cli: `agent-native connect ${appUrl}`,
   };
@@ -225,14 +249,12 @@ function agentNativeMarkSvg(className: string, gradientId: string): string {
 }
 
 function renderConnectPage(params: {
-  origin: string;
   connectBasePath: string;
   email: string;
   appName: string;
   userCode: string | null;
 }): string {
-  const { origin, connectBasePath, email, appName, userCode } = params;
-  const safeOrigin = escapeHtml(origin);
+  const { connectBasePath, email, appName, userCode } = params;
   const safeEmail = escapeHtml(email);
   const safeApp = escapeHtml(appName);
   const brandMarkSvg = agentNativeMarkSvg(
@@ -321,33 +343,28 @@ function renderConnectPage(params: {
   }
   h1 {
     text-align: center; font-size: 1.45rem; font-weight: 680;
-    line-height: 1.25; margin-bottom: 0.55rem;
+    line-height: 1.25; margin-bottom: 0.7rem;
     letter-spacing: -0.01em;
-  }
-  .sub {
-    text-align: center; color: var(--muted); font-size: 0.9rem;
-    line-height: 1.5; margin: 0 auto 0.9rem; max-width: 36ch;
   }
   .identity {
     display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
     gap: 0.25rem 0.45rem; color: var(--subtle); font-size: 0.78rem;
-    line-height: 1.35; margin: 0 auto 1.4rem; max-width: 34ch;
+    line-height: 1.35; margin: 0 auto 1.5rem; max-width: 34ch;
   }
   .identity strong { color: var(--muted); font-weight: 600; }
-  .identity .origin { overflow-wrap: anywhere; }
   .device-strip {
     display: flex; align-items: center; justify-content: space-between;
     gap: 0.75rem; border: 1px solid var(--border);
-    border-radius: 8px; padding: 0.55rem 0.65rem; margin: 0 0 0.9rem;
+    border-radius: 8px; padding: 0.5rem 0.65rem; margin: 0 0 0.9rem;
     background: var(--panel-soft); color: var(--muted);
   }
   .device-strip .label {
     font-size: 0.76rem; font-weight: 560; color: var(--subtle);
   }
   .device-strip .value {
-    font-size: 0.9rem; font-weight: 700;
+    font-size: 0.78rem; font-weight: 650;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    letter-spacing: 0.08em; color: var(--text);
+    letter-spacing: 0.08em; color: var(--muted);
   }
   button {
     cursor: pointer; font: inherit; font-weight: 600; border: none;
@@ -497,11 +514,8 @@ function renderConnectPage(params: {
 
     <div class="eyebrow">Connect an external agent</div>
     <h1>${safeUserCode ? `Authorize ${safeApp} from your terminal?` : `Connect ${safeApp} to an agent`}</h1>
-    <p class="sub">Allow Claude Code, Codex, or Cowork to use ${safeApp} with your account. You can revoke access anytime.</p>
     <p class="identity">
       <span>Signed in as <strong>${safeEmail}</strong></span>
-      <span aria-hidden="true">&middot;</span>
-      <span class="origin">${safeOrigin}</span>
     </p>
   </div>
 
@@ -598,7 +612,6 @@ function renderConnectPage(params: {
       var res = await fetch(BASE + "/tokens", { credentials: "same-origin" });
       if (!res.ok) {
         connectionsStateEl.textContent = "Unavailable";
-        connectionsEl.open = true;
         listEl.innerHTML = '<div class="empty-state">Could not load connections.</div>';
         return;
       }
@@ -612,7 +625,6 @@ function renderConnectPage(params: {
       }
       var activeCount = tokens.filter(function (t) { return !t.revokedAt; }).length;
       connectionsStateEl.textContent = activeCount === 1 ? "1 active" : activeCount + " active";
-      connectionsEl.open = true;
       listEl.innerHTML = "";
       tokens.forEach(function (t) {
         var div = document.createElement("div");
@@ -643,7 +655,6 @@ function renderConnectPage(params: {
       });
     } catch (e) {
       connectionsStateEl.textContent = "Unavailable";
-      connectionsEl.open = true;
       listEl.innerHTML = '<div class="empty-state">Could not load connections.</div>';
     }
   }
@@ -662,10 +673,57 @@ function renderConnectPage(params: {
           showMsg((a.data && a.data.error) || "Could not authorize this device code.");
           return;
         }
-        showMsg("Device authorized. Return to your terminal; it will connect automatically.", "ok");
+        showMsg("Device authorized — finishing connection… you can return to your terminal.", "ok");
         btn.classList.add("hidden");
         document.getElementById("mintForm").classList.add("hidden");
-        document.getElementById("codeCallout").classList.add("hidden");
+        var cc = document.getElementById("codeCallout");
+        if (cc) cc.classList.add("hidden");
+        // The token is minted a few seconds later, when the CLI next polls
+        // /device/poll — so a single loadTokens() here runs BEFORE the row
+        // exists and the list would wrongly read "No connections yet" until
+        // a manual reload. Snapshot the EXISTING non-revoked token ids first
+        // so we announce "Connected" only when THIS device's freshly-minted
+        // token appears — a user who already has tokens must not get a false
+        // success the instant they authorize.
+        var priorIds = {};
+        try {
+          var pr = await fetch(BASE + "/tokens", { credentials: "same-origin" });
+          if (pr.ok) {
+            var pd = await pr.json();
+            ((pd && pd.tokens) || []).forEach(function (t) {
+              if (!t.revokedAt) priorIds[t.id] = true;
+            });
+          }
+        } catch (e) {}
+        loadTokens();
+        var tries = 0;
+        var iv = setInterval(async function () {
+          tries++;
+          try {
+            var res = await fetch(BASE + "/tokens", { credentials: "same-origin" });
+            if (res.ok) {
+              var data = await res.json();
+              var fresh = ((data && data.tokens) || []).filter(function (t) {
+                return !t.revokedAt && !priorIds[t.id];
+              });
+              if (fresh.length > 0) {
+                clearInterval(iv);
+                showMsg("Connected. This device can now act as you — manage or revoke it below.", "ok");
+                loadTokens();
+                return;
+              }
+            }
+          } catch (e) {}
+          if (tries >= 30) {
+            // No new token appeared in the window — e.g. the loopback
+            // dev-open path writes a header-only config and never mints.
+            // Don't claim "Connected" (we couldn't confirm a device token);
+            // keep the "authorized" message and just refresh the list.
+            clearInterval(iv);
+            loadTokens();
+          }
+        }, 2000);
+        return;
       } else {
         var m = await postJson("/token", { label: label, ttlDays: ttlDays });
         if (!m.ok) {
@@ -727,7 +785,6 @@ export async function handleMcpConnect(
       // Fully-open app (no auth guard): nothing to scope a mint to.
       return html(
         renderConnectPage({
-          origin: appUrl,
           connectBasePath: basePath,
           email: "(no auth configured)",
           appName: options.appName || appLabel(appUrl, options),
@@ -748,7 +805,6 @@ export async function handleMcpConnect(
     }
     return html(
       renderConnectPage({
-        origin: appUrl,
         connectBasePath: basePath,
         email: session.email,
         appName: options.appName || appLabel(appUrl, options),
@@ -763,6 +819,11 @@ export async function handleMcpConnect(
     const session = await getSession(event);
     if (!session?.email) return json({ error: "Unauthorized" }, 401);
     if (!process.env.A2A_SECRET) {
+      if (canUseDevOpenConnect(event)) {
+        return json(
+          mcpResultPayload(appUrl, options, { ownerEmail: session.email }),
+        );
+      }
       return json(
         {
           error:
@@ -787,7 +848,7 @@ export async function handleMcpConnect(
         label,
         ttlDays,
       });
-      return json(mcpResultPayload(appUrl, token, options));
+      return json(mcpResultPayload(appUrl, options, { token }));
     } catch {
       return json({ error: "Failed to mint token." }, 500);
     }
@@ -873,6 +934,23 @@ export async function handleMcpConnect(
     }
     // status === "approved" && ownerEmail bound → mint exactly once.
     if (!process.env.A2A_SECRET) {
+      if (canUseDevOpenConnect(event)) {
+        const consumed = await consumeDeviceCode(
+          deviceCode,
+          `dev-open-${randomUUID()}`,
+        );
+        if (!consumed) {
+          const fresh = await getDeviceCode(deviceCode);
+          if (fresh?.status === "consumed") return json({ status: "consumed" });
+          return json({ status: "pending" });
+        }
+        return json({
+          status: "approved",
+          ...mcpResultPayload(appUrl, options, {
+            ownerEmail: row.ownerEmail,
+          }),
+        });
+      }
       return json({ status: "error", error: "A2A_SECRET not configured" }, 503);
     }
     try {
@@ -908,7 +986,7 @@ export async function handleMcpConnect(
       }
       return json({
         status: "approved",
-        ...mcpResultPayload(appUrl, token, options),
+        ...mcpResultPayload(appUrl, options, { token }),
       });
     } catch {
       return json({ status: "error", error: "Failed to mint token." }, 500);

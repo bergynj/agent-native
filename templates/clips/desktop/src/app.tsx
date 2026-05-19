@@ -565,6 +565,11 @@ export function App() {
     null,
   );
   const isRecording = recorder !== null;
+  const selectedMicLabel = useMemo(
+    () =>
+      micId ? (mics.find((mic) => mic.deviceId === micId)?.label ?? "") : "",
+    [micId, mics],
+  );
   const voiceDictationEnabled = featureConfig?.voiceEnabled !== false;
   const fnShortcutEnabled =
     voiceDictationEnabled &&
@@ -586,6 +591,8 @@ export function App() {
       shortcut: voiceShortcut,
       mode: voiceMode,
       provider: voiceProvider,
+      micDeviceId: micId || null,
+      micDeviceLabel: selectedMicLabel || null,
       instructions: voiceInstructions,
     });
   }, [
@@ -594,6 +601,8 @@ export function App() {
     voiceDictationEnabled,
     voiceMode,
     voiceProvider,
+    micId,
+    selectedMicLabel,
     voiceInstructions,
   ]);
 
@@ -835,6 +844,7 @@ export function App() {
         });
       }
       await invoke("recording_pill_hide").catch(() => {});
+      await invoke("set_recording_state", { active: false }).catch(() => {});
       emit("meetings:transcription-stopped", {
         meetingId: session.meetingId,
         reason,
@@ -879,6 +889,7 @@ export function App() {
           audioMode: "mic-system",
         };
         meetingTranscriptionRef.current = session;
+        await invoke("set_recording_state", { active: true }).catch(() => {});
 
         const scheduleFlush = () => {
           if (session.flushTimer) window.clearTimeout(session.flushTimer);
@@ -928,6 +939,11 @@ export function App() {
           }),
         );
         addUnlisten(
+          listen("clips:recorder-stop", () => {
+            stopMeetingTranscription("manual").catch(() => {});
+          }),
+        );
+        addUnlisten(
           listen("meetings:silence-stop", () => {
             stopMeetingTranscription("silence").catch(() => {});
           }),
@@ -952,6 +968,8 @@ export function App() {
           await invoke("meeting_audio_start", {
             meetingId: resolvedMeetingId,
             locale: navigator.language || "en-US",
+            micDeviceId: micId || null,
+            micDeviceLabel: selectedMicLabel || null,
           });
         } catch (err) {
           console.warn(
@@ -961,6 +979,8 @@ export function App() {
           session.audioMode = "mic-only";
           await invoke("native_speech_start", {
             locale: navigator.language || "en-US",
+            micDeviceId: micId || null,
+            micDeviceLabel: selectedMicLabel || null,
           });
         }
 
@@ -985,6 +1005,7 @@ export function App() {
       } catch (err) {
         meetingTranscriptionRef.current = null;
         await invoke("recording_pill_hide").catch(() => {});
+        await invoke("set_recording_state", { active: false }).catch(() => {});
         const message =
           err instanceof Error ? err.message : "Could not start notes.";
         emit("meetings:transcription-error", {
@@ -1178,14 +1199,27 @@ export function App() {
     // stream offline (macOS can't reliably share a camera across two
     // WebViews in the same process). Camera-label text is low-value
     // anyway; most machines have one.
+    //
+    // Do not probe `audio: true` here. On macOS that opens the system
+    // default input, which can shove Bluetooth headphones into hands-free
+    // mode just from opening the Clips popover. If the user has picked a
+    // specific mic, use that exact device; otherwise leave labels locked
+    // until a real user action needs microphone access.
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!micId) {
+        await loadDevices();
+        return;
+      }
+      const s = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { exact: micId } },
+        video: false,
+      });
       s.getTracks().forEach((t) => t.stop());
     } catch {
       // permission denied — labels stay empty until the user grants
     }
     await loadDevices();
-  }, [loadDevices]);
+  }, [loadDevices, micId]);
 
   // ---- Esc closes the popover --------------------------------------------
   useEffect(() => {
@@ -1848,6 +1882,7 @@ export function App() {
         source,
         cameraId,
         micId,
+        micLabel: selectedMicLabel || undefined,
         authToken: loadDesktopAuthToken(serverUrl),
         cookie: typeof document !== "undefined" ? document.cookie || "" : "",
         cameraOn,
@@ -2969,11 +3004,21 @@ function DeviceRow({
   onToggle: (v: boolean) => void;
 }) {
   const current = useMemo(
-    () => devices.find((d) => d.deviceId === selectedId) ?? devices[0],
+    () =>
+      selectedId
+        ? (devices.find((d) => d.deviceId === selectedId) ?? null)
+        : null,
     [devices, selectedId],
   );
   const label =
-    current?.label || (kind === "camera" ? "Default camera" : "Default mic");
+    current?.label ||
+    (selectedId
+      ? kind === "camera"
+        ? "Selected camera unavailable"
+        : "Selected mic unavailable"
+      : kind === "camera"
+        ? "Default camera"
+        : "Default mic");
   const Icon = kind === "camera" ? CameraIcon : MicIcon;
 
   const [open, setOpen] = useState(false);
@@ -3032,7 +3077,7 @@ function DeviceRow({
             </div>
           ) : (
             devices.map((d) => {
-              const isSelected = d.deviceId === (current?.deviceId ?? "");
+              const isSelected = !!selectedId && d.deviceId === selectedId;
               return (
                 <button
                   key={d.deviceId}

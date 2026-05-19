@@ -47,6 +47,7 @@ describe("parseConnectArgs", () => {
     const p = parseConnectArgs(["https://mail.agent-native.com"]);
     expect(p.url).toBe("https://mail.agent-native.com");
     expect(p.client).toBe("all");
+    expect(p.clientExplicit).toBe(false);
     expect(p.scope).toBe("user");
     expect(p.all).toBe(false);
     expect(p.token).toBeUndefined();
@@ -63,6 +64,7 @@ describe("parseConnectArgs", () => {
       "--token=abc123",
     ]);
     expect(p.client).toBe("codex");
+    expect(p.clientExplicit).toBe(true);
     expect(p.scope).toBe("user");
     expect(p.name).toBe("my-server");
     expect(p.token).toBe("abc123");
@@ -202,6 +204,37 @@ describe("runDeviceFlow", () => {
     expect(open).toHaveBeenCalledWith(
       "https://app.example.com/connect?code=WXYZ-1234",
     );
+  });
+
+  it("accepts an approved local entry without a bearer token", async () => {
+    const grant = await runDeviceFlow(
+      "http://localhost:4321",
+      "analytics",
+      "codex",
+      {
+        fetchImpl: makeFetch([
+          {
+            status: "approved",
+            token: "",
+            mcpUrl: "http://localhost:4321/_agent-native/mcp",
+            serverName: "agent-native-analytics-local",
+            mcpServerEntry: {
+              type: "http",
+              url: "http://localhost:4321/_agent-native/mcp",
+              headers: { "X-Agent-Native-Owner-Email": "u@example.com" },
+            },
+          },
+        ]),
+        sleep: noopSleep,
+        openBrowser: vi.fn(),
+      },
+    );
+    expect(grant).toEqual({
+      token: undefined,
+      mcpUrl: "http://localhost:4321/_agent-native/mcp",
+      serverName: "agent-native-analytics-local",
+      headers: { "X-Agent-Native-Owner-Email": "u@example.com" },
+    });
   });
 
   it("returns null on expired", async () => {
@@ -348,6 +381,25 @@ describe("writeConfigs", () => {
     });
   });
 
+  it("writes a JSON HTTP entry with server-provided headers and no token", () => {
+    const root = tmpDir();
+    const written = writeConfigs(
+      ["claude-code"],
+      "agent-native-analytics-local",
+      "http://localhost:4321/_agent-native/mcp",
+      undefined,
+      "project",
+      root,
+      { "X-Agent-Native-Owner-Email": "u@example.com" },
+    );
+    const cfg = JSON.parse(fs.readFileSync(written[0].file, "utf-8"));
+    expect(cfg.mcpServers["agent-native-analytics-local"]).toEqual({
+      type: "http",
+      url: "http://localhost:4321/_agent-native/mcp",
+      headers: { "X-Agent-Native-Owner-Email": "u@example.com" },
+    });
+  });
+
   it("is idempotent: re-running replaces the same entry, no duplicates", () => {
     const root = tmpDir();
     writeConfigs(
@@ -419,7 +471,7 @@ describe("writeConfigs", () => {
       expect(toml).toContain(
         'url = "https://mail.agent-native.com/_agent-native/mcp"',
       );
-      expect(toml).toContain("Bearer tok-1");
+      expect(toml).toContain('"Authorization" = "Bearer tok-1"');
       // Re-run is idempotent (single block).
       writeConfigs(
         ["codex"],
@@ -437,6 +489,29 @@ describe("writeConfigs", () => {
     } finally {
       process.env.HOME = HOME;
       void codexFile;
+    }
+  });
+
+  it("writes Codex TOML headers returned by the server", () => {
+    const root = tmpDir();
+    const HOME = process.env.HOME;
+    const codexHome = tmpDir();
+    process.env.HOME = codexHome;
+    try {
+      const written = writeConfigs(
+        ["codex"],
+        "agent-native-analytics-local",
+        "http://localhost:4321/_agent-native/mcp",
+        undefined,
+        "project",
+        root,
+        { "X-Agent-Native-Owner-Email": "u@example.com" },
+      );
+      const toml = fs.readFileSync(written[0].file, "utf-8");
+      expect(toml).toContain('"X-Agent-Native-Owner-Email" = "u@example.com"');
+      expect(toml).not.toContain("Authorization");
+    } finally {
+      process.env.HOME = HOME;
     }
   });
 
@@ -552,6 +627,140 @@ describe("runConnect", () => {
       url: "https://mail.agent-native.com/_agent-native/mcp",
       headers: { Authorization: "Bearer tok-fallback" },
     });
+  });
+
+  it("prompts for target clients when --client is omitted and saves the choice", async () => {
+    const root = tmpDir();
+    const home = tmpDir();
+    const oldHome = process.env.HOME;
+    const oldCi = process.env.CI;
+    const preferencesFile = path.join(root, "prefs", "connect.json");
+    process.env.HOME = home;
+    process.env.CI = "true";
+    process.chdir(root);
+
+    const promptClients = vi.fn(async (context) => {
+      expect(context.initialClients).toEqual(resolveClients("all"));
+      expect(context.preferencesFile).toBe(preferencesFile);
+      return ["codex" as const];
+    });
+
+    try {
+      await runConnect(
+        [
+          "https://mail.agent-native.com",
+          "--scope",
+          "project",
+          "--token",
+          "tok-fallback",
+        ],
+        {
+          isInteractive: () => true,
+          promptClients,
+          preferencesFile,
+        },
+      );
+
+      expect(promptClients).toHaveBeenCalledTimes(1);
+      expect(
+        JSON.parse(fs.readFileSync(preferencesFile, "utf-8")),
+      ).toMatchObject({ defaultClients: ["codex"] });
+      expect(fs.existsSync(path.join(root, ".mcp.json"))).toBe(false);
+      const codexToml = fs.readFileSync(
+        path.join(home, ".codex", "config.toml"),
+        "utf-8",
+      );
+      expect(codexToml).toContain('[mcp_servers."agent-native-mail"]');
+    } finally {
+      process.env.HOME = oldHome;
+      if (oldCi === undefined) {
+        delete process.env.CI;
+      } else {
+        process.env.CI = oldCi;
+      }
+    }
+  });
+
+  it("preselects saved client preferences on future interactive runs", async () => {
+    const root = tmpDir();
+    const home = tmpDir();
+    const oldHome = process.env.HOME;
+    const preferencesFile = path.join(root, "prefs", "connect.json");
+    fs.mkdirSync(path.dirname(preferencesFile), { recursive: true });
+    fs.writeFileSync(
+      preferencesFile,
+      JSON.stringify({ defaultClients: ["codex", "cowork"] }),
+    );
+    process.env.HOME = home;
+    process.chdir(root);
+
+    const promptClients = vi.fn(async (context) => {
+      expect(context.initialClients).toEqual(["codex", "cowork"]);
+      return ["cowork" as const];
+    });
+
+    try {
+      await runConnect(
+        [
+          "https://mail.agent-native.com",
+          "--scope",
+          "project",
+          "--token",
+          "tok-fallback",
+        ],
+        {
+          isInteractive: () => true,
+          promptClients,
+          preferencesFile,
+        },
+      );
+
+      expect(
+        JSON.parse(fs.readFileSync(preferencesFile, "utf-8")),
+      ).toMatchObject({ defaultClients: ["cowork"] });
+      const coworkJson = JSON.parse(
+        fs.readFileSync(path.join(home, ".cowork", "mcp.json"), "utf-8"),
+      );
+      expect(coworkJson.mcpServers["agent-native-mail"].headers).toEqual({
+        Authorization: "Bearer tok-fallback",
+      });
+      expect(fs.existsSync(path.join(home, ".codex", "config.toml"))).toBe(
+        false,
+      );
+    } finally {
+      process.env.HOME = oldHome;
+    }
+  });
+
+  it("keeps --client explicit and skips the saved picker preference", async () => {
+    const root = tmpDir();
+    const preferencesFile = path.join(root, "prefs", "connect.json");
+    process.chdir(root);
+    const promptClients = vi.fn(async () => ["codex" as const]);
+
+    await runConnect(
+      [
+        "https://mail.agent-native.com",
+        "--client",
+        "claude-code",
+        "--scope",
+        "project",
+        "--token",
+        "tok-fallback",
+      ],
+      {
+        isInteractive: () => true,
+        promptClients,
+        preferencesFile,
+      },
+    );
+
+    expect(promptClients).not.toHaveBeenCalled();
+    expect(fs.existsSync(preferencesFile)).toBe(false);
+    const cfg = JSON.parse(
+      fs.readFileSync(path.join(root, ".mcp.json"), "utf-8"),
+    );
+    expect(Object.keys(cfg.mcpServers)).toEqual(["agent-native-mail"]);
   });
 
   it("sets a non-zero exit code when no url and not --all", async () => {

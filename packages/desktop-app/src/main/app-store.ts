@@ -20,12 +20,21 @@ const CODE_AGENT_PROVIDER_STORE_FILE = "code-agent-providers.json";
 const REMOVED_DESKTOP_APP_IDS = new Set(["starter"]);
 
 type StoredSecret =
+  | { encoding: "local-file-v1"; value: string; updatedAt?: string }
   | { encoding: "safeStorage-v1"; value: string; updatedAt?: string }
   | { encoding: "plain"; value: string; updatedAt?: string };
 
 interface CodeAgentProviderStore {
   version: 1;
   credentials: Partial<Record<CodeAgentProviderCredentialKey, StoredSecret>>;
+}
+
+export interface CodeAgentProviderCredentialApplyResult {
+  ok: boolean;
+  settings: CodeAgentProviderSettings;
+  appliedKeys: CodeAgentProviderCredentialKey[];
+  failedKeys: CodeAgentProviderCredentialKey[];
+  error?: string;
 }
 
 const CODE_AGENT_PROVIDER_DEFINITIONS: Array<{
@@ -188,14 +197,27 @@ function saveCodeAgentProviderStore(store: CodeAgentProviderStore): void {
   }
 }
 
-function encryptProviderSecret(value: string): StoredSecret {
-  if (safeStorage.isEncryptionAvailable()) {
-    return {
-      encoding: "safeStorage-v1",
-      value: safeStorage.encryptString(value).toString("base64"),
-      updatedAt: new Date().toISOString(),
-    };
+function canUseSafeStorage(): boolean {
+  try {
+    return safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
   }
+}
+
+function encodeProviderSecret(value: string): StoredSecret {
+  if (canUseSafeStorage()) {
+    try {
+      return {
+        encoding: "safeStorage-v1",
+        value: safeStorage.encryptString(value).toString("base64"),
+        updatedAt: new Date().toISOString(),
+      };
+    } catch {
+      // Fall through to the plain fallback below.
+    }
+  }
+
   return {
     encoding: "plain",
     value,
@@ -207,13 +229,47 @@ function decryptProviderSecret(
   secret: StoredSecret | undefined,
 ): string | null {
   if (!secret?.value) return null;
-  if (secret.encoding === "plain") return secret.value;
-  if (!safeStorage.isEncryptionAvailable()) return null;
+  if (secret.encoding === "local-file-v1" || secret.encoding === "plain") {
+    return secret.value;
+  }
+  if (!canUseSafeStorage()) return null;
   try {
     return safeStorage.decryptString(Buffer.from(secret.value, "base64"));
   } catch {
     return null;
   }
+}
+
+function migrateDecryptableProviderSecrets(
+  store: CodeAgentProviderStore,
+  credentials: Partial<Record<CodeAgentProviderCredentialKey, string>>,
+): void {
+  if (!canUseSafeStorage()) return;
+  let changed = false;
+  for (const key of CODE_AGENT_PROVIDER_KEYS) {
+    const secret = store.credentials[key];
+    const value = credentials[key];
+    if (!value || !secret || secret.encoding === "safeStorage-v1") continue;
+    store.credentials[key] = encodeProviderSecret(value);
+    changed = true;
+  }
+  if (changed) saveCodeAgentProviderStore(store);
+}
+
+function hasStoredProviderSecretBlob(
+  secret: StoredSecret | undefined,
+): boolean {
+  return Boolean(secret?.value);
+}
+
+function canReadStoredProviderSecret(
+  secret: StoredSecret | undefined,
+): boolean {
+  if (!secret?.value) return false;
+  if (secret.encoding === "local-file-v1" || secret.encoding === "plain") {
+    return true;
+  }
+  return Boolean(decryptProviderSecret(secret));
 }
 
 export function loadCodeAgentProviderCredentials(): Partial<
@@ -226,6 +282,7 @@ export function loadCodeAgentProviderCredentials(): Partial<
     const value = decryptProviderSecret(store.credentials[key]);
     if (value) credentials[key] = value;
   }
+  migrateDecryptableProviderSecrets(store, credentials);
   return credentials;
 }
 
@@ -239,7 +296,7 @@ export function saveCodeAgentProviderCredentials(
     if (!value) {
       delete store.credentials[key];
     } else {
-      store.credentials[key] = encryptProviderSecret(value);
+      store.credentials[key] = encodeProviderSecret(value);
     }
   }
   saveCodeAgentProviderStore(store);
@@ -247,31 +304,51 @@ export function saveCodeAgentProviderCredentials(
   return getCodeAgentProviderSettingsStatus();
 }
 
-export function applyCodeAgentProviderCredentialsToEnv(): void {
+export function applyCodeAgentProviderCredentialsToEnv(): CodeAgentProviderCredentialApplyResult {
+  const store = loadCodeAgentProviderStore();
   const credentials = loadCodeAgentProviderCredentials();
+  const appliedKeys: CodeAgentProviderCredentialKey[] = [];
+  const failedKeys: CodeAgentProviderCredentialKey[] = [];
   for (const key of CODE_AGENT_PROVIDER_KEYS) {
     const value = credentials[key] ?? INITIAL_CODE_AGENT_PROVIDER_ENV.get(key);
     if (value) {
       process.env[key] = value;
+      if (credentials[key]) appliedKeys.push(key);
     } else {
       delete process.env[key];
+      if (hasStoredProviderSecretBlob(store.credentials[key])) {
+        failedKeys.push(key);
+      }
     }
   }
+  return {
+    ok: failedKeys.length === 0,
+    settings: getCodeAgentProviderSettingsStatus(),
+    appliedKeys,
+    failedKeys,
+    error:
+      failedKeys.length > 0
+        ? "Could not unlock one or more saved code provider keys."
+        : undefined,
+  };
 }
 
 export function getCodeAgentProviderSettingsStatus(): CodeAgentProviderSettings {
-  const savedCredentials = loadCodeAgentProviderCredentials();
+  const store = loadCodeAgentProviderStore();
   const providers = CODE_AGENT_PROVIDER_DEFINITIONS.map((provider) => {
-    const configuredKeys = provider.keys.filter((key) =>
-      Boolean(process.env[key]),
-    );
     const savedKeys = provider.keys.filter((key) =>
-      Boolean(savedCredentials[key]),
+      canReadStoredProviderSecret(store.credentials[key]),
     );
-    const missingKeys = provider.keys.filter((key) => !process.env[key]);
+    const envKeys = provider.keys.filter((key) => Boolean(process.env[key]));
+    const configuredKeys = provider.keys.filter(
+      (key) => Boolean(process.env[key]) || savedKeys.includes(key),
+    );
+    const missingKeys = provider.keys.filter(
+      (key) => !process.env[key] && !savedKeys.includes(key),
+    );
     const configured = missingKeys.length === 0;
     const hasSaved = savedKeys.length > 0;
-    const hasEnv = configuredKeys.some((key) => !savedCredentials[key]);
+    const hasEnv = envKeys.some((key) => !savedKeys.includes(key));
     const source: CodeAgentProviderStatus["source"] | undefined = configured
       ? hasSaved && hasEnv
         ? "mixed"
@@ -295,7 +372,6 @@ export function getCodeAgentProviderSettingsStatus(): CodeAgentProviderSettings 
       .filter((provider) => provider.configured)
       .map((provider) => provider.label),
     providers,
-    encryptionAvailable: safeStorage.isEncryptionAvailable(),
     storagePath: getCodeAgentProviderStorePath(),
   };
 }
