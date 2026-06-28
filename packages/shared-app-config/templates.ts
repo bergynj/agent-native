@@ -241,6 +241,18 @@ export const TEMPLATES: TemplateMeta[] = [
     hidden: true,
     defaultMode: "dev",
   },
+  {
+    name: "job-hunt",
+    label: "Job Hunt",
+    hint: "AI-assisted job hunting — daily shortlisting, ATS analysis, cover letter + resume tailoring",
+    icon: "Briefcase",
+    color: "#0D9488",
+    colorRgb: "13 148 136",
+    devPort: 8106,
+    prodUrl: "https://job-hunt.agent-native.com",
+    hidden: true,
+    defaultMode: "dev",
+  },
 ];
 
 /** Return templates visible in user-facing pickers (excludes hidden). */
