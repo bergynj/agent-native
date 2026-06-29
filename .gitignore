@@ -106,3 +106,4 @@ templates/*/.env.local
 templates/*/.env.*.local
 test-reports/
 *.tsbuildinfo
+/.pnpm-store
